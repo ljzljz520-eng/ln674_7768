@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "metrics": {
+    "production_loc": 2345,
+    "production_files": 35,
+    "production_packages": 7,
+    "test_files": 9,
+    "production_functions": 179,
+    "decision_points": 332
+  },
+  "persistence": {
+    "module": "go.etcd.io/bbolt",
+    "entities": [
+      "Device",
+      "SyncRecord",
+      "AuditEvent",
+      "RetryTask"
+    ],
+    "reopen_test": "TestPersistenceSurvivesReopen"
+  },
+  "workflows": [
+    {
+      "steps": [
+        "load deterministic vendor fixtures",
+        "normalize device status",
+        "persist devices and sync record",
+        "render dashboard summary"
+      ],
+      "test": "TestWorkflowSyncDashboard"
+    },
+    {
+      "steps": [
+        "capture vendor failure",
+        "persist failed sync and audit event",
+        "queue a bounded retry task",
+        "resolve retry and query audit trail"
+      ],
+      "test": "TestWorkflowRetryAudit"
+    },
+    {
+      "steps": [
+        "load successful sync record",
+        "release two operator confirmations together",
+        "persist confirmation count and events",
+        "query final record audit references"
+      ],
+      "test": "TestWorkflowConcurrentConfirmation"
+    }
+  ]
+}

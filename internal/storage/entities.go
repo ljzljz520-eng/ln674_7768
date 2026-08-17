@@ -9,19 +9,31 @@ import (
 )
 
 func (s *Store) SaveConfirmation(record domain.SyncRecord, event domain.AuditEvent) error {
-	recordData, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
+	recordID := record.ID
 	eventData, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 	return s.db.Update(func(tx *bbolt.Tx) error {
+		records := tx.Bucket(recordsBucket)
+		recordData := records.Get([]byte(recordID))
+		if recordData == nil {
+			return ErrNotFound
+		}
+		var record domain.SyncRecord
+		if err := json.Unmarshal(recordData, &record); err != nil {
+			return err
+		}
+		record.Confirmations++
+		record.AddAudit(event.ID)
+		recordData, err = json.Marshal(record)
+		if err != nil {
+			return err
+		}
 		if err := tx.Bucket(auditBucket).Put([]byte(event.ID), eventData); err != nil {
 			return err
 		}
-		return tx.Bucket(recordsBucket).Put([]byte(record.ID), recordData)
+		return records.Put([]byte(recordID), recordData)
 	})
 }
 

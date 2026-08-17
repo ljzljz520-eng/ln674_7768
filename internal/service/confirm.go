@@ -36,9 +36,7 @@ func (c *ConfirmationService) Confirm(recordID, operator string) (domain.AuditEv
 	if c.barrier != nil {
 		<-c.barrier
 	}
-	record.Confirmations++
 	eventID := fmt.Sprintf("confirm:%s:%s", recordID, operator)
-	record.AddAudit(eventID)
 	event := domain.NewAuditEvent(eventID, recordID, operator, domain.ActionConfirmed, "operator confirmed synchronized status", c.clock.Now())
 	if err := c.store.SaveConfirmation(record, event); err != nil {
 		return domain.AuditEvent{}, err

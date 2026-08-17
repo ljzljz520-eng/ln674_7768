@@ -2,27 +2,55 @@ package storage
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"campus-device-hub/internal/domain"
 	"go.etcd.io/bbolt"
 )
 
-func (s *Store) SaveConfirmation(record domain.SyncRecord, event domain.AuditEvent) error {
-	recordData, err := json.Marshal(record)
-	if err != nil {
-		return err
+// ApplyConfirmation atomically records an operator's confirmation against the
+// current stored record. It reads the record, increments its confirmation
+// count, appends the audit-event reference, bumps the revision, writes the
+// audit event, and writes the record back — all within a single bbolt
+// transaction. Because the read and the write share one transaction, two
+// operators confirming the same record at once are serialized at the storage
+// layer and neither can overwrite the other's update (a lost-update that
+// previously dropped one confirmation and its audit event).
+func (s *Store) ApplyConfirmation(recordID string, event domain.AuditEvent) (domain.SyncRecord, error) {
+	var updated domain.SyncRecord
+	if recordID == "" {
+		return updated, ErrNotFound
 	}
 	eventData, err := json.Marshal(event)
 	if err != nil {
-		return err
+		return updated, fmt.Errorf("encode event %s: %w", event.ID, err)
 	}
-	return s.db.Update(func(tx *bbolt.Tx) error {
+	err = s.db.Update(func(tx *bbolt.Tx) error {
+		records := tx.Bucket(recordsBucket)
+		if records == nil {
+			return ErrNotFound
+		}
+		current := records.Get([]byte(recordID))
+		if current == nil {
+			return ErrNotFound
+		}
+		if err := decodeValue(current, &updated); err != nil {
+			return err
+		}
+		updated.Confirmations++
+		updated.AddAudit(event.ID)
+		updated.Revision++
+		recordData, err := json.Marshal(updated)
+		if err != nil {
+			return fmt.Errorf("encode record %s: %w", recordID, err)
+		}
 		if err := tx.Bucket(auditBucket).Put([]byte(event.ID), eventData); err != nil {
 			return err
 		}
-		return tx.Bucket(recordsBucket).Put([]byte(record.ID), recordData)
+		return records.Put([]byte(recordID), recordData)
 	})
+	return updated, err
 }
 
 func (s *Store) ListAuditEventsForRecord(recordID string) ([]domain.AuditEvent, error) {

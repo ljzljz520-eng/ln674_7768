@@ -23,6 +23,8 @@ func NewConfirmationService(store *storage.Store, clock Clock, barrier <-chan st
 }
 
 func (c *ConfirmationService) Confirm(recordID, operator string) (domain.AuditEvent, error) {
+	// Pre-read the record so the operator can be validated up front and so
+	// concurrent callers can coordinate on the barrier before any mutation.
 	record, err := c.store.GetSyncRecord(recordID)
 	if err != nil {
 		return domain.AuditEvent{}, err
@@ -36,11 +38,13 @@ func (c *ConfirmationService) Confirm(recordID, operator string) (domain.AuditEv
 	if c.barrier != nil {
 		<-c.barrier
 	}
-	record.Confirmations++
 	eventID := fmt.Sprintf("confirm:%s:%s", recordID, operator)
-	record.AddAudit(eventID)
 	event := domain.NewAuditEvent(eventID, recordID, operator, domain.ActionConfirmed, "operator confirmed synchronized status", c.clock.Now())
-	if err := c.store.SaveConfirmation(record, event); err != nil {
+	// ApplyConfirmation reads the current record, bumps the confirmation count,
+	// appends this event, and writes both back in a single transaction. The
+	// read and the write share one transaction, so two operators confirming at
+	// once cannot overwrite each other's update.
+	if _, err := c.store.ApplyConfirmation(recordID, event); err != nil {
 		return domain.AuditEvent{}, err
 	}
 	return event, nil
